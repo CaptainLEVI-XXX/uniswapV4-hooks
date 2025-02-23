@@ -9,29 +9,24 @@ import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 
-
 contract DynamicFeeHook is BaseHook {
     using LPFeeLibrary for uint24;
 
-   // keep track of the moving average gas price
+    // keep track of the moving average gas price
     uint128 public movingAverageGasPrice;
-
 
     // Needed as the denominator to update it the next time based on the moving average formula
     uint104 public movingAverageGasPriceCount;
 
     // The default base fees we will charge
-    uint24 public constant BASE_FEE = 5000; // 0.5%   == 
+    uint24 public constant BASE_FEE = 5000; // 0.5%   ==
 
-    error MustUseDynamicFee(); 
+    error MustUseDynamicFee();
 
-    constructor(IPoolManager _manager) BaseHook(_manager){
+    constructor(IPoolManager _manager) BaseHook(_manager) {
         // update gasPrice
         updateMovingAverage();
     }
-
-
-
 
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
@@ -52,16 +47,15 @@ contract DynamicFeeHook is BaseHook {
         });
     }
 
-    function _beforeInitialize(address, PoolKey calldata key, uint160) internal pure override returns (bytes4)
-    {
+    function _beforeInitialize(address, PoolKey calldata key, uint160) internal pure override returns (bytes4) {
         // `.isDynamicFee()` function comes from using
-       // the `SwapFeeLibrary` for `uint24` 
-        if(!key.fee.isDynamicFee()) revert MustUseDynamicFee();
+        // the `SwapFeeLibrary` for `uint24`
+        if (!key.fee.isDynamicFee()) revert MustUseDynamicFee();
 
         return this.beforeInitialize.selector;
     }
 
-     function _beforeSwap(address, PoolKey calldata, IPoolManager.SwapParams calldata, bytes calldata)
+    function _beforeSwap(address, PoolKey calldata, IPoolManager.SwapParams calldata, bytes calldata)
         internal
         view
         override
@@ -78,47 +72,36 @@ contract DynamicFeeHook is BaseHook {
         return (this.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, feeWithFlag);
     }
 
-
-    function _afterSwap(
-        address,
-        PoolKey calldata,
-        IPoolManager.SwapParams calldata,
-        BalanceDelta,
-        bytes calldata
-    ) internal override returns (bytes4, int128) {
-		// in after swap hook we just need to update the moving average 
+    function _afterSwap(address, PoolKey calldata, IPoolManager.SwapParams calldata, BalanceDelta, bytes calldata)
+        internal
+        override
+        returns (bytes4, int128)
+    {
+        // in after swap hook we just need to update the moving average
         updateMovingAverage();
         return (this.afterSwap.selector, 0);
     }
 
-    function updateMovingAverage() internal{
-
+    function updateMovingAverage() internal {
         uint128 gasPrice = uint128(tx.gasprice);
 
         // New Average = ((Old Average * # of Txns Tracked) + Current Gas Price) / (# of Txns Tracked + 1)
-        movingAverageGasPrice =((movingAverageGasPrice * movingAverageGasPriceCount) + gasPrice) / (movingAverageGasPriceCount + 1);
-        movingAverageGasPriceCount++; 
-
+        movingAverageGasPrice =
+            ((movingAverageGasPrice * movingAverageGasPriceCount) + gasPrice) / (movingAverageGasPriceCount + 1);
+        movingAverageGasPriceCount++;
     }
 
-    function getFee() internal view returns(uint24){
+    function getFee() internal view returns (uint24) {
         uint128 gasPrice = uint128(tx.gasprice);
 
-         // if gasPrice > movingAverageGasPrice * 1.1, then half the fees
+        // if gasPrice > movingAverageGasPrice * 1.1, then half the fees
 
-        if(gasPrice > movingAverageGasPrice * 11/10) return BASE_FEE/2;
+        if (gasPrice > movingAverageGasPrice * 11 / 10) return BASE_FEE / 2;
 
-          // if gasPrice < movingAverageGasPrice * 0.9, then double the fees
+        // if gasPrice < movingAverageGasPrice * 0.9, then double the fees
 
-        if(gasPrice < movingAverageGasPrice * 11/10) return BASE_FEE * 2;
+        if (gasPrice < movingAverageGasPrice * 11 / 10) return BASE_FEE * 2;
 
         return BASE_FEE;
-        
     }
-
-
-
-
-
-
 }
