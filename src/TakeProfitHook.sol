@@ -24,6 +24,8 @@ contract TakeProfitHook is BaseHook, ERC1155 {
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
 
+    error NotEnoughToCancel();
+
     mapping(PoolId poolId => mapping(int24 tickToSellAt => mapping(bool zeroForOne => uint256 inputAmount))) public
         pendingOrders;
 
@@ -64,7 +66,7 @@ contract TakeProfitHook is BaseHook, ERC1155 {
     }
 
     //Placing an order:
-    function placeOrder(PoolKey calldata key, bool zeroForOne, int24 tickToSell, uint256 inputAmount)
+    function placeOrder(PoolKey calldata key, bool zeroForOne, int24 tickToSellAt, uint256 inputAmount)
         external
         returns (int24)
     {
@@ -74,7 +76,7 @@ contract TakeProfitHook is BaseHook, ERC1155 {
         //3: we need to mint some tokens to user which represents their order
         //4: transfer the right token from user to contract
 
-        int24 tick = getLowerUsableTick(tickToSell, key.tickSpacing);
+        int24 tick = getLowerUsableTick(tickToSellAt, key.tickSpacing);
 
         pendingOrders[key.toId()][tick][zeroForOne] += inputAmount;
 
@@ -112,5 +114,29 @@ contract TakeProfitHook is BaseHook, ERC1155 {
         if (tick < 0 && tick % tickSpacing != 0) intervals--;
 
         return intervals * tickSpacing;
+    }
+
+    // for canceling the order
+
+    function cancelOrder(PoolKey calldata key, bool zeroForOne, int24 tickToSellAt, uint256 amountToCancel) external {
+        int24 tick = getLowerUsableTick(tickToSellAt, key.tickSpacing);
+
+        uint256 positionId = getPositionId(key, tick, zeroForOne);
+
+        // check if the msg.sender has enough amount to these ERC1155 tokens of a particular psoitionId;
+
+        uint256 positionToken = balanceOf(msg.sender, positionId);
+
+        if (positionToken < amountToCancel) revert NotEnoughToCancel();
+
+        pendingOrders[key.toId()][tick][zeroForOne] -= amountToCancel;
+
+        claimsTotalSupply[positionId] -= amountToCancel;
+
+        Currency tokenCurrency = zeroForOne ? key.currency0 : key.currency1;
+
+        _burn(msg.sender, positionId, amountToCancel);
+
+        tokenCurrency.transfer(msg.sender, amountToCancel);
     }
 }
