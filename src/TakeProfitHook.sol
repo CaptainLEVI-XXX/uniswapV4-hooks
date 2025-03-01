@@ -19,17 +19,22 @@ import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
 
 contract TakeProfitHook is BaseHook, ERC1155 {
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
+    using FixedPointMathLib for uint256;
 
     error NotEnoughToCancel();
+    error NothingToClaim();
+    error NotEnoughToClaim();
 
     mapping(PoolId poolId => mapping(int24 tickToSellAt => mapping(bool zeroForOne => uint256 inputAmount))) public
         pendingOrders;
 
     mapping(uint256 positionId => uint256 claimsSupply) public claimsTotalSupply;
+    mapping(uint256 positionId=>uint256 outputClaimable) public claimableOutputToken;
     // constructor set up
 
     constructor(IPoolManager _manager, string memory _uri) BaseHook(_manager) ERC1155(_uri) {}
@@ -139,4 +144,37 @@ contract TakeProfitHook is BaseHook, ERC1155 {
 
         tokenCurrency.transfer(msg.sender, amountToCancel);
     }
+
+    // for redeeming the token:  
+
+    function redeem(PoolKey calldata key, bool zeroForOne, int24 tickToSellAt,uint256 inputAmountToClaimFor) external {
+
+        int24 tick = getLowerUsableTick(tickToSellAt, key.tickSpacing);
+
+        uint256 positionId = getPositionId(key, tick, zeroForOne);
+
+        // if the no out claimable tokens are theere that means currently the order has not been filled.
+        if(claimableOutputToken[positionId] == 0 ) revert NothingToClaim();
+
+        uint256 positionTokens = balanceOf(msg.sender,positionId);
+        // revert if the user doesn't have enough balance of ERC1155 tokens i.e representation tokens.
+        if(inputAmountToClaimFor > positionTokens) revert NotEnoughToClaim();
+
+        uint256 totalClaimableForPosition = claimableOutputToken[positionId];
+        uint256 totalInputAmountForPosition = claimsTotalSupply[positionId];
+
+        uint256 outputToken = inputAmountToClaimFor.mulDivDown(totalClaimableForPosition,totalInputAmountForPosition);
+
+        claimableOutputToken[positionId] -= outputToken;
+        claimsTotalSupply[positionId] -= inputAmountToClaimFor;
+
+        _burn(msg.sender,positionId,inputAmountToClaimFor);
+
+        Currency token = zeroForOne ? key.currency1 : key.currency0;
+        token.transfer(msg.sender, outputToken);
+        
+    }
+
+
+
 }
