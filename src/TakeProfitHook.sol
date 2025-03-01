@@ -21,11 +21,13 @@ import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
+import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 
 contract TakeProfitHook is BaseHook, ERC1155 {
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
     using FixedPointMathLib for uint256;
+    using StateLibrary for IPoolManager;
 
     error NotEnoughToCancel();
     error NothingToClaim();
@@ -33,6 +35,7 @@ contract TakeProfitHook is BaseHook, ERC1155 {
 
     mapping(PoolId poolId => mapping(int24 tickToSellAt => mapping(bool zeroForOne => uint256 inputAmount))) public
         pendingOrders;
+    mapping(PoolId poolId => int24 lastTick) lastTicks;
 
     mapping(uint256 positionId => uint256 claimsSupply) public claimsTotalSupply;
     mapping(uint256 positionId => uint256 outputClaimable) public claimableOutputToken;
@@ -59,16 +62,57 @@ contract TakeProfitHook is BaseHook, ERC1155 {
         });
     }
 
-    function _afterInitialize(address, PoolKey calldata, uint160, int24) internal override returns (bytes4) {
+    function _afterInitialize(address, PoolKey calldata key, uint160, int24 tick) internal override returns (bytes4) {
+        lastTicks[key.toId()] = tick;
         return (this.afterInitialize.selector);
     }
 
-    function _afterSwap(address, PoolKey calldata, IPoolManager.SwapParams calldata, BalanceDelta, bytes calldata)
-        internal
-        override
-        returns (bytes4, int128)
-    {
+    function _afterSwap(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata params,
+        BalanceDelta,
+        bytes calldata
+    ) internal override returns (bytes4, int128) {
+        // need to handle the case of recursion other wise Transaction can reach Block gAs limit
+        if (sender == address(this)) return (this.afterSwap.selector, 0);
+        bool tryMore = true;
+        int24 currentTick;
+
+        while (tryMore) {
+            (tryMore, currentTick) = tryExecutingOrders(key, !params.zeroForOne);
+        }
+        lastTicks[key.toId()] = currentTick;
         return (this.afterSwap.selector, 0);
+    }
+
+    function tryExecutingOrders(PoolKey calldata key, bool executeZeroForOne) internal returns (bool, int24) {
+        // there can be two case : whether currnet tick > last tick
+        int24 lastTick = lastTicks[key.toId()];
+        (, int24 currentTick,,) = poolManager.getSlot0(key.toId());
+        int24 tickSpacing = key.tickSpacing;
+
+        if (currentTick > lastTick) {
+            for (int24 tick = lastTick; tick <= currentTick; tick += tickSpacing) {
+                uint256 inputAmount = pendingOrders[key.toId()][tick][executeZeroForOne];
+
+                if (inputAmount > 0) {
+                    executeOrder(key, tick, executeZeroForOne, inputAmount);
+                    return (true, currentTick);
+                }
+            }
+        } else {
+            for (int24 tick = lastTick; tick >= currentTick; tick -= tickSpacing) {
+                uint256 inputAmount = pendingOrders[key.toId()][tick][executeZeroForOne];
+
+                if (inputAmount > 0) {
+                    executeOrder(key, tick, executeZeroForOne, inputAmount);
+                    return (true, currentTick);
+                }
+            }
+        }
+
+        return (false, currentTick);
     }
 
     //Placing an order:
