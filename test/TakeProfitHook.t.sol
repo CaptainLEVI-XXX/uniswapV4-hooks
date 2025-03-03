@@ -10,8 +10,16 @@ import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
 import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
+import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+
+import {PoolManager} from "v4-core/PoolManager.sol";
+
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 
 contract TestTakeProfitHook is Test, Deployers {
+    using StateLibrary for IPoolManager;
+    using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
 
     Currency token0;
@@ -25,9 +33,11 @@ contract TestTakeProfitHook is Test, Deployers {
         // Deploy, mint tokens, and approve all periphery contracts for two tokens
         (token0, token1) = deployMintAndApprove2Currencies();
 
-        address hookAddress = address(uint160(Hooks.AFTER_INITIALIZE_FLAG | Hooks.AFTER_SWAP_FLAG));
+        uint160 flags = uint160(Hooks.AFTER_INITIALIZE_FLAG | Hooks.AFTER_SWAP_FLAG);
 
-        deployCodeTo("TakeProfitHook", abi.encode(manager), hookAddress);
+        address hookAddress = address(flags);
+
+        deployCodeTo("TakeProfitHook.sol", abi.encode(manager), hookAddress);
 
         hook = TakeProfitHook(hookAddress);
 
@@ -78,5 +88,40 @@ contract TestTakeProfitHook is Test, Deployers {
             }),
             ZERO_BYTES
         );
+    }
+
+    function test_PlaceOrder() public {
+        //place a zeroForoOne ake profit order at tick 100
+
+        int24 tick = 100;
+        uint256 amount = 10e18;
+        bool zeroForOne = true;
+
+        // note the token0 balance of address(this)
+        uint256 balanceBefore = token0.balanceOfSelf();
+        //place the order
+        int24 tickLower = hook.placeOrder(key, zeroForOne, tick, amount);
+
+        uint256 balanceAfter = token0.balanceOfSelf();
+
+        assertEq(balanceBefore - balanceAfter, amount, "Balance didn't deducted");
+
+        // since we have initialized the pool with tick 60 the lower minimal usable tick is 60.
+        assertEq(tickLower, 60);
+
+        uint256 positionId = hook.getPositionId(key, tickLower, zeroForOne);
+        uint256 tokenBalance = hook.balanceOf(address(this), positionId);
+
+        // Ensure that we were, in fact, given ERC-1155 tokens for the order
+        // equal to the `amount` of token0 tokens we placed the order for
+        assertTrue(positionId != 0);
+        assertEq(tokenBalance, amount);
+    }
+
+    function onERC1155Received(address operator, address from, uint256 id, uint256 value, bytes calldata data)
+        external
+        returns (bytes4)
+    {
+        return this.onERC1155Received.selector;
     }
 }

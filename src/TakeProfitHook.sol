@@ -41,12 +41,12 @@ contract TakeProfitHook is BaseHook, ERC1155 {
     mapping(uint256 positionId => uint256 outputClaimable) public claimableOutputToken;
     // constructor set up
 
-    constructor(IPoolManager _manager, string memory _uri) BaseHook(_manager) ERC1155(_uri) {}
+    constructor(IPoolManager _manager) BaseHook(_manager) ERC1155("") {}
 
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
-            beforeInitialize: true,
-            afterInitialize: false,
+            beforeInitialize: false,
+            afterInitialize: true,
             beforeAddLiquidity: false,
             beforeRemoveLiquidity: false,
             afterAddLiquidity: false,
@@ -148,7 +148,7 @@ contract TakeProfitHook is BaseHook, ERC1155 {
     }
 
     function getPositionId(PoolKey calldata key, int24 tick, bool zeroForOne)
-        internal
+        public
         pure
         returns (uint256 positionId)
     {
