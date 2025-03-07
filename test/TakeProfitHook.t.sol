@@ -12,6 +12,7 @@ import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
 
 import {PoolManager} from "v4-core/PoolManager.sol";
 
@@ -145,6 +146,47 @@ contract TestTakeProfitHook is Test, Deployers {
 
         tokenBalance = hook.balanceOf(address(this), positionId);
         assertEq(tokenBalance, 0);
+    }
+
+    function test_orderExecute_zeroForOne() public {
+        int24 tick = 100;
+        uint256 amount = 1 ether;
+        bool zeroForOne = true;
+
+        // Place our order at tick 100 for 10e18 token0 tokens
+        int24 tickLower = hook.placeOrder(key, zeroForOne, tick, amount);
+
+        // Do a separate swap from oneForZero to make tick go up
+        // Sell 1e18 token1 tokens for token0 tokens
+        IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
+            zeroForOne: !zeroForOne,
+            amountSpecified: -1 ether,
+            sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1
+        });
+
+        PoolSwapTest.TestSettings memory testSettings =
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false});
+
+        // Conduct the swap - `afterSwap` should also execute our placed order
+        swapRouter.swap(key, params, testSettings, ZERO_BYTES);
+
+        // Check that the order has been executed
+        // by ensuring no amount is left to sell in the pending orders
+        uint256 pendingTokensForPosition = hook.pendingOrders(key.toId(), tick, zeroForOne);
+        assertEq(pendingTokensForPosition, 0);
+
+        // Check that the hook contract has the expected number of token1 tokens ready to redeem
+        uint256 positionId = hook.getPositionId(key, tickLower, zeroForOne);
+        uint256 claimableOutputTokens = hook.claimableOutputToken(positionId);
+        uint256 hookContractToken1Balance = token1.balanceOf(address(hook));
+        assertEq(claimableOutputTokens, hookContractToken1Balance);
+
+        // Ensure we can redeem the token1 tokens
+        uint256 originalToken1Balance = token1.balanceOf(address(this));
+        hook.redeem(key, zeroForOne, tick, amount);
+        uint256 newToken1Balance = token1.balanceOf(address(this));
+
+        assertEq(newToken1Balance - originalToken1Balance, claimableOutputTokens);
     }
 
     function onERC1155Received(address operator, address from, uint256 id, uint256 value, bytes calldata data)
