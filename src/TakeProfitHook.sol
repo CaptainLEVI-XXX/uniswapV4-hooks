@@ -93,7 +93,7 @@ contract TakeProfitHook is BaseHook, ERC1155 {
         int24 tickSpacing = key.tickSpacing;
 
         if (currentTick > lastTick) {
-            for (int24 tick = lastTick; tick <= currentTick; tick += tickSpacing) {
+            for (int24 tick = lastTick; tick < currentTick; tick += tickSpacing) {
                 uint256 inputAmount = pendingOrders[key.toId()][tick][executeZeroForOne];
 
                 if (inputAmount > 0) {
@@ -102,7 +102,7 @@ contract TakeProfitHook is BaseHook, ERC1155 {
                 }
             }
         } else {
-            for (int24 tick = lastTick; tick >= currentTick; tick -= tickSpacing) {
+            for (int24 tick = lastTick; tick > currentTick; tick -= tickSpacing) {
                 uint256 inputAmount = pendingOrders[key.toId()][tick][executeZeroForOne];
 
                 if (inputAmount > 0) {
@@ -247,14 +247,14 @@ contract TakeProfitHook is BaseHook, ERC1155 {
 
         uint256 positionId = getPositionId(key, tick, zeroForOne);
         //update the state of the contracts
-        claimableOutputToken[positionId] -= outputAmount;
+        claimableOutputToken[positionId] += outputAmount;
     }
 
     function swapAndSettleBalances(PoolKey calldata key, IPoolManager.SwapParams memory params)
         internal
-        returns (BalanceDelta)
+        returns (BalanceDelta delta)
     {
-        BalanceDelta delta = poolManager.swap(key, params, "");
+        delta = poolManager.swap(key, params, "");
 
         // if the swap is zero to one than there must two situation if
         if (params.zeroForOne) {
@@ -274,14 +274,14 @@ contract TakeProfitHook is BaseHook, ERC1155 {
         }
     }
 
-    function _settle(Currency currency, uint256 amount) internal {
+    function _settle(Currency currency, uint128 amount) internal {
         // sync the pool manager : alert the pool manager regarding deposit
         poolManager.sync(currency);
         currency.transfer(address(poolManager), amount);
         poolManager.settle();
     }
 
-    function _take(Currency currency, uint256 amount) internal {
+    function _take(Currency currency, uint128 amount) internal {
         // take tokens out of the pool contract to out Hook contract
         poolManager.take(currency, address(this), amount);
     }

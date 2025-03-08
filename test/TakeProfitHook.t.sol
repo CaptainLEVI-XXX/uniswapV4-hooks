@@ -17,6 +17,7 @@ import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
 import {PoolManager} from "v4-core/PoolManager.sol";
 
 import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
+import {console} from "forge-std/console.sol";
 
 contract TestTakeProfitHook is Test, Deployers {
     using StateLibrary for IPoolManager;
@@ -172,21 +173,122 @@ contract TestTakeProfitHook is Test, Deployers {
 
         // Check that the order has been executed
         // by ensuring no amount is left to sell in the pending orders
-        uint256 pendingTokensForPosition = hook.pendingOrders(key.toId(), tick, zeroForOne);
+        uint256 pendingTokensForPosition = hook.pendingOrders(key.toId(), tickLower, zeroForOne);
         assertEq(pendingTokensForPosition, 0);
 
         // Check that the hook contract has the expected number of token1 tokens ready to redeem
         uint256 positionId = hook.getPositionId(key, tickLower, zeroForOne);
         uint256 claimableOutputTokens = hook.claimableOutputToken(positionId);
+        // console.log("claimable: ",claimableOutputTokens);
         uint256 hookContractToken1Balance = token1.balanceOf(address(hook));
         assertEq(claimableOutputTokens, hookContractToken1Balance);
 
         // Ensure we can redeem the token1 tokens
-        uint256 originalToken1Balance = token1.balanceOf(address(this));
+        uint256 originalToken1Balance = token1.balanceOfSelf();
         hook.redeem(key, zeroForOne, tick, amount);
-        uint256 newToken1Balance = token1.balanceOf(address(this));
+        uint256 newToken1Balance = token1.balanceOfSelf();
 
         assertEq(newToken1Balance - originalToken1Balance, claimableOutputTokens);
+    }
+
+    function test_orderExecute_oneForZero() public {
+        int24 tick = -100;
+        uint256 amount = 10 ether;
+        bool zeroForOne = false;
+
+        // Place our order at tick -100 for 10e18 token1 tokens
+        int24 tickLower = hook.placeOrder(key, zeroForOne, tick, amount);
+
+        // Do a separate swap from zeroForOne to make tick go down
+        // Sell 1e18 token0 tokens for token1 tokens
+        IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
+            zeroForOne: true,
+            amountSpecified: -1 ether,
+            sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+        });
+
+        PoolSwapTest.TestSettings memory testSettings =
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false});
+
+        swapRouter.swap(key, params, testSettings, ZERO_BYTES);
+
+        // Check that the order has been executed
+        uint256 tokensLeftToSell = hook.pendingOrders(key.toId(), tick, zeroForOne);
+        assertEq(tokensLeftToSell, 0);
+
+        // Check that the hook contract has the expected number of token0 tokens ready to redeem
+        uint256 positionId = hook.getPositionId(key, tickLower, zeroForOne);
+        uint256 claimableOutputTokens = hook.claimableOutputToken(positionId);
+        uint256 hookContractToken0Balance = token0.balanceOf(address(hook));
+        assertEq(claimableOutputTokens, hookContractToken0Balance);
+
+        // Ensure we can redeem the token0 tokens
+        uint256 originalToken0Balance = token0.balanceOfSelf();
+        hook.redeem(key, zeroForOne, tick, amount);
+        uint256 newToken0Balance = token0.balanceOfSelf();
+
+        assertEq(newToken0Balance - originalToken0Balance, claimableOutputTokens);
+    }
+
+    function test_multiple_orderExecute_zeroForOne_onlyOne() public {
+        PoolSwapTest.TestSettings memory testSettings =
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false});
+
+        // Setup two zeroForOne orders at ticks 0 and 60
+        uint256 amount = 0.01 ether;
+
+        hook.placeOrder(key, true, 0, amount);
+        hook.placeOrder(key, true, 60, amount);
+
+        (, int24 currentTick,,) = manager.getSlot0(key.toId());
+        assertEq(currentTick, 0);
+
+        // Do a swap to make tick increase beyond 60
+        IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
+            zeroForOne: false,
+            amountSpecified: -0.1 ether,
+            sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1
+        });
+
+        swapRouter.swap(key, params, testSettings, ZERO_BYTES);
+
+        // Only one order should have been executed
+        // because the execution of that order would lower the tick
+        // so even though tick increased beyond 60
+        // the first order execution will lower it back down
+        // so order at tick = 60 will not be executed
+        uint256 tokensLeftToSell = hook.pendingOrders(key.toId(), 0, true);
+        assertEq(tokensLeftToSell, 0);
+
+        // Order at Tick 60 should still be pending
+        tokensLeftToSell = hook.pendingOrders(key.toId(), 60, true);
+        assertEq(tokensLeftToSell, amount);
+    }
+
+    function test_multiple_orderExecute_zeroForOne_both() public {
+        PoolSwapTest.TestSettings memory testSettings =
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false});
+
+        // Setup two zeroForOne orders at ticks 0 and 60
+        uint256 amount = 0.01 ether;
+
+        hook.placeOrder(key, true, 0, amount);
+        hook.placeOrder(key, true, 60, amount);
+
+        // Do a swap to make tick increase
+        IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
+            zeroForOne: false,
+            amountSpecified: -0.5 ether,
+            sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1
+        });
+
+        swapRouter.swap(key, params, testSettings, ZERO_BYTES);
+
+        uint256 tokensLeftToSell = hook.pendingOrders(key.toId(), 0, true);
+        assertEq(tokensLeftToSell, 0);
+
+        tokensLeftToSell = hook.pendingOrders(key.toId(), 60, true);
+        assertEq(tokensLeftToSell, 0);
     }
 
     function onERC1155Received(address operator, address from, uint256 id, uint256 value, bytes calldata data)
