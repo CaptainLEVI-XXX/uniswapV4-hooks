@@ -25,36 +25,21 @@ contract TestCSMM is Test, Deployers {
 
         deployCodeTo("CSMM.sol", abi.encode(manager), hookAddress);
         hook = CSMM(hookAddress);
-        (key,) = initPool(
-            currency0,
-            currency1,
-            hook,
-            3000,
-            SQRT_PRICE_1_1
-        );
+        (key,) = initPool(currency0, currency1, hook, 3000, SQRT_PRICE_1_1);
 
         // Add some initial liquidity through the custom `addLiquidity` function
-         IERC20Minimal(Currency.unwrap(key.currency0)).approve(
-            hookAddress,
-            1000 ether
-        );
-        IERC20Minimal(Currency.unwrap(key.currency1)).approve(
-            hookAddress,
-            1000 ether
-        );
+        IERC20Minimal(Currency.unwrap(key.currency0)).approve(hookAddress, 1000 ether);
+        IERC20Minimal(Currency.unwrap(key.currency1)).approve(hookAddress, 1000 ether);
 
         hook.addLiquidity(key, 1000e18);
-
-
     }
 
     function test_cannotModifyLiquidity() public {
         vm.expectRevert();
-        modifyLiquidityRouter.modifyLiquidity(key,IPoolManager.ModifyLiquidityParams({
-            tickLower: -60,
-            tickUpper: 60,
-            liquidityDelta: 1e18,
-            salt: bytes32(0)
-        }),  ZERO_BYTES);
+        modifyLiquidityRouter.modifyLiquidity(
+            key,
+            IPoolManager.ModifyLiquidityParams({tickLower: -60, tickUpper: 60, liquidityDelta: 1e18, salt: bytes32(0)}),
+            ZERO_BYTES
+        );
     }
 }
