@@ -42,4 +42,15 @@ contract TestCSMM is Test, Deployers {
             ZERO_BYTES
         );
     }
+
+    function test_claimTokenBalance() public view {
+        uint256 token0ClaimId = currency0.toId();
+        uint256 token1ClaimId = currency1.toId();
+
+        uint256 token0ClaimBalance = manager.balanceOf(address(hook), token0ClaimId);
+        uint256 token1ClaimBalance = manager.balanceOf(address(hook), token1ClaimId);
+
+        assertEq(token0ClaimBalance, 1000 ether);
+        assertEq(token1ClaimBalance, 1000 ether);
+    }
 }
