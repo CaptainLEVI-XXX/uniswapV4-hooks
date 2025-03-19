@@ -69,10 +69,10 @@ contract CSMM is BaseHook {
     }
 
     function _beforeSwap(
-        address sender,
+        address,
         PoolKey calldata key,
         IPoolManager.SwapParams calldata params,
-        bytes calldata data
+        bytes calldata
     ) internal virtual override returns (bytes4, BeforeSwapDelta, uint24) {
         uint256 amountInOutPositive =
             params.amountSpecified > 0 ? uint256(params.amountSpecified) : uint256(-params.amountSpecified);
